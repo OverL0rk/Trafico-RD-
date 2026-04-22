@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="es">
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║        Monitor de Tráfico — Gran Santo Domingo                  ║
+  ║        UASD · MAT 3940 · Investigación de Operaciones           ║
+  ╠══════════════════════════════════════════════════════════════════╣
+  ║  Autor  : OverL0rk                                              ║
+  ║  GitHub : https://github.com/OverL0rk                          ║
+  ║  Versión: 2.0.0                                                 ║
+  ║  Fecha  : 2026                                                  ║
+  ╠══════════════════════════════════════════════════════════════════╣
+  ║  Fuentes de datos:                                              ║
+  ║    · Waze Live Map                                              ║
+  ║    · Google Maps JS API (Traffic Layer + Heatmap)               ║
+  ║    · OpenStreetMap                                              ║
+  ║    · Windy (clima vial)                                         ║
+  ║    · SerpAPI (búsqueda en vivo)                                 ║
+  ╚══════════════════════════════════════════════════════════════════╝
+-->
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="author" content="OverL0rk — https://github.com/OverL0rk" />
+  <meta name="description" content="Monitor de tráfico en tiempo real para el Gran Santo Domingo. UASD MAT 3940." />
+  <title>Monitor de Tráfico · Gran Santo Domingo</title>
+
+  <!-- ── Dependencias externas ───────────────────────────────────── -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+
+  <!--
+    Google Maps: el callback se declara ANTES de que la API cargue (async).
+    Así window.initGoogleMap existe en el scope global cuando Google lo busca.
+  -->
+  <script>
+    window.initGoogleMap = function () {
+      window.__gmapsReady = true;
+      if (window.__gmapsTabActive) TrafficMap.build();
+    };
+  </script>
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCT4rUydyktBIp-3IGDPtf6mmO56LqXETc&libraries=visualization&callback=initGoogleMap"
+    async defer
+  ></script>
+
+  <!-- ── Estilos ─────────────────────────────────────────────────── -->
+  <style>
+    /* ── Tokens de diseño ──────────────────────────────────────── */
+    :root {
+      --bg    : #0b0e1a;
+      --card  : #111827;
+      --card2 : #1a2035;
+      --bdr   : #1e2d4a;
+      --txt   : #e2e8f0;
+      --dim   : #64748b;
+      --green : #22c55e;
+      --yellow: #f59e0b;
+      --orange: #f97316;
+      --red   : #ef4444;
+      --blue  : #3b82f6;
+      --purple: #a855f7;
+      --teal  : #14b8a6;
+      --radius: 10px;
+      --gap   : 12px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background : var(--bg);
+      color      : var(--txt);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size  : 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Utilidades comunes ────────────────────────────────────── */
+    .card {
+      background   : var(--card);
+      border       : 1px solid var(--bdr);
+      border-radius: var(--radius);
+      overflow     : hidden;
+    }
+
+    /* Cabecera de card */
+    .card-head {
+      background   : var(--card2);
+      border-bottom: 1px solid var(--bdr);
+      padding      : 9px 14px;
+      display      : flex;
+      align-items  : center;
+      justify-content: space-between;
+      gap          : 8px;
+    }
+
+    .card-head .title { font-weight: 600; font-size: 13px; }
+
+    .badge {
+      font-size    : 10px;
+      padding      : 2px 8px;
+      border-radius: 12px;
+      font-weight  : 600;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-red    { background: #7f1d1d; color: var(--red);    }
+    .badge-yellow { background: #713f12; color: var(--yellow); }
+    .badge-green  { background: #14532d; color: var(--green);  }
+    .badge-blue   { background: #1e3a5f; color: var(--blue);   }
+
+    /* Botones genéricos */
+    .btn {
+      border       : none;
+      border-radius: 6px;
+      cursor       : pointer;
+      font-size    : 12px;
+      font-weight  : 600;
+      padding      : 6px 14px;
+      color        : #fff;
+      transition   : transform 0.1s ease, opacity 0.1s ease;
+    }
+
+    .btn:active    { transform: scale(0.97); }
+    .btn:disabled  { opacity: 0.5; cursor: not-allowed; }
+    .btn-green     { background: var(--green);  }
+    .btn-blue      { background: var(--blue);   }
+    .btn-purple    { background: var(--purple); }
+    .btn-red       { background: var(--red);    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    header {
+      background   : linear-gradient(90deg, #0d1b3e, var(--bg));
+      border-bottom: 1px solid var(--bdr);
+      padding      : 10px 20px;
+      display      : flex;
+      align-items  : center;
+      justify-content: space-between;
+      gap          : 12px;
+      flex-wrap    : wrap;
+    }
+
+    .hd-left { display: flex; align-items: center; gap: 12px; }
+
+    .brand small  { color: var(--dim); font-size: 11px; }
+    .brand strong { display: block; font-size: 15px; color: #fff; }
+
+    .hd-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+    #clock {
+      font-size           : 22px;
+      font-weight         : 700;
+      font-variant-numeric: tabular-nums;
+      color               : #fff;
+    }
+
+    #dateline { font-size: 11px; color: var(--dim); text-align: right; }
+
+    .live {
+      background    : var(--red);
+      color         : #fff;
+      padding       : 3px 10px;
+      border-radius : 20px;
+      font-size     : 11px;
+      font-weight   : 700;
+      letter-spacing: 1px;
+      animation     : blink 1.4s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1;    }
+      50%       { opacity: 0.45; }
+    }
+
+    /* ── Firma digital (pie del header) ───────────────────────── */
+    .author-tag {
+      font-size    : 10px;
+      color        : var(--dim);
+      display      : flex;
+      align-items  : center;
+      gap          : 6px;
+      border       : 1px solid var(--bdr);
+      border-radius: 20px;
+      padding      : 3px 10px;
+      white-space  : nowrap;
+      text-decoration: none;
+      transition   : color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .author-tag:hover { color: var(--blue); border-color: var(--blue); }
+    .author-tag .dot  { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+    /* ── Layout principal ─────────────────────────────────────── */
+    .wrap {
+      max-width: 1700px;
+      margin   : 0 auto;
+      padding  : var(--gap) 14px;
+    }
+
+    /* ── Barra de fuentes ─────────────────────────────────────── */
+    .sources-bar {
+      background   : linear-gradient(90deg, #1e3a5f, var(--card2));
+      border       : 1px solid #2563eb44;
+      border-radius: var(--radius);
+      padding      : 10px 16px;
+      margin-bottom: var(--gap);
+      display      : flex;
+      align-items  : center;
+      justify-content: space-between;
+      gap          : 12px;
+      flex-wrap    : wrap;
+    }
+
+    .sources-bar small { color: var(--dim); font-size: 11px; display: block; margin-top: 2px; }
+    .sources-bar strong { font-size: 13px; }
+
+    .btn-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    /* ── KPIs ─────────────────────────────────────────────────── */
+    .kpis {
+      display              : grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap                  : 10px;
+      margin-bottom        : var(--gap);
+    }
+
+    .kpi {
+      background   : var(--card);
+      border       : 1px solid var(--bdr);
+      border-radius: var(--radius);
+      padding      : 12px 14px;
+      display      : flex;
+      align-items  : center;
+      gap          : 12px;
+    }
+
+    .kpi-icon {
+      width        : 42px;
+      height       : 42px;
+      border-radius: 9px;
+      display      : flex;
+      align-items  : center;
+      justify-content: center;
+      font-size    : 20px;
+      flex-shrink  : 0;
+    }
+
+    .kpi-label { font-size: 11px; color: var(--dim); line-height: 1.3; }
+    .kpi-value { font-size: 21px; font-weight: 700; line-height: 1.1; }
+    .kpi-sub   { font-size: 10px; color: var(--dim); }
+
+    /* ── Grid mapa + sidebar ──────────────────────────────────── */
+    .map-grid {
+      display              : grid;
+      grid-template-columns: 1fr 320px;
+      gap                  : var(--gap);
+      margin-bottom        : var(--gap);
+    }
+
+    @media (max-width: 960px) { .map-grid { grid-template-columns: 1fr; } }
+
+    /* ── Tabs del mapa ────────────────────────────────────────── */
+    .map-tabs {
+      display     : flex;
+      gap         : 4px;
+      background  : var(--card2);
+      border-bottom: 1px solid var(--bdr);
+      padding     : 6px 10px;
+      align-items : center;
+      flex-wrap   : wrap;
+    }
+
+    .map-tab {
+      background   : var(--bg);
+      border       : 1px solid var(--bdr);
+      color        : var(--dim);
+      padding      : 6px 12px;
+      border-radius: 6px;
+      cursor       : pointer;
+      font-size    : 12px;
+      font-weight  : 600;
+      transition   : all 0.2s ease;
+    }
+
+    .map-tab:hover            { color: var(--txt); border-color: var(--blue); }
+    .map-tab[aria-selected="true"] {
+      background  : var(--blue);
+      color       : #fff;
+      border-color: var(--blue);
+    }
+
+    .map-tab-info { margin-left: auto; color: var(--dim); font-size: 11px; }
+
+    /* ── Contenedor del mapa ──────────────────────────────────── */
+    .map-viewport {
+      display : block;
+      height  : 70vh;
+      width   : 100%;
+      background: #0d1b2a;
+      position: relative;
+      overflow: hidden;
+    }
+
+    @media (max-width: 680px) { .map-viewport { height: 80vh; } }
+
+    #mapFrame {
+      filter : saturate(1.05) contrast(1.02);
+      width  : 100%;
+      height : 100%;
+      border : 0;
+      display: block;
+    }
+
+    /* Google Maps JS container */
+    #gmapContainer {
+      width   : 100%;
+      height  : 100%;
+      display : none;
+      position: relative;
+    }
+
+    #gmapDiv { width: 100%; height: 100%; }
+
+    .map-viewport.gmap-active #gmapContainer { display: block; }
+    .map-viewport.gmap-active #mapFrame      { display: none;  }
+
+    /* Controles flotantes sobre el mapa */
+    .gmap-controls {
+      position      : absolute;
+      top           : 10px;
+      right         : 10px;
+      z-index       : 10;
+      display       : flex;
+      flex-direction: column;
+      gap           : 6px;
+    }
+
+    .gmap-ctrl-btn {
+      background  : var(--card);
+      border      : 1px solid var(--bdr);
+      color       : var(--txt);
+      padding     : 6px 12px;
+      border-radius: 6px;
+      cursor      : pointer;
+      font-size   : 11px;
+      font-weight : 600;
+      white-space : nowrap;
+      box-shadow  : 0 2px 8px #0006;
+      transition  : all 0.15s ease;
+    }
+
+    .gmap-ctrl-btn.active       { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .gmap-ctrl-btn:hover:not(.active) { border-color: var(--blue); }
+
+    /* Leyenda del mapa */
+    .gmap-legend {
+      position      : absolute;
+      bottom        : 30px;
+      left          : 10px;
+      background    : var(--card);
+      border        : 1px solid var(--bdr);
+      border-radius : 8px;
+      padding       : 8px 12px;
+      z-index       : 10;
+      font-size     : 11px;
+      display       : flex;
+      flex-direction: column;
+      gap           : 5px;
+    }
+
+    .gmap-legend-title { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+    .gmap-leg-item     { display: flex; align-items: center; gap: 7px; }
+    .gmap-leg-dot      { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+    /* Pie del mapa */
+    .map-footer {
+      background: var(--card2);
+      border-top: 1px solid var(--bdr);
+      padding   : 8px 14px;
+      display   : flex;
+      gap       : 18px;
+      flex-wrap : wrap;
+      align-items: center;
+      font-size : 11px;
+      color     : var(--dim);
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────── */
+    .sidebar { display: flex; flex-direction: column; gap: var(--gap); }
+
+    /* Gauge */
+    .gauge-wrap       { position: relative; padding: 8px 14px 4px; }
+    .gauge-canvas-wrap { position: relative; max-width: 220px; margin: 0 auto; }
+
+    .gauge-center {
+      position  : absolute;
+      bottom    : 18px;
+      left      : 50%;
+      transform : translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .gauge-num   { font-size: 30px; font-weight: 800; }
+    .gauge-label { font-size: 11px; color: var(--dim); margin-top: 2px; letter-spacing: 0.5px; text-transform: uppercase; }
+
+    .gauge-scale {
+      display        : flex;
+      justify-content: space-between;
+      font-size      : 10px;
+      color          : var(--dim);
+      max-width      : 220px;
+      margin         : 4px auto 0;
+      padding        : 0 6px;
+    }
+
+    /* Zonas */
+    .zone-row    { padding: 7px 14px; border-bottom: 1px solid var(--bdr); display: flex; flex-direction: column; gap: 4px; }
+    .zone-top    { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .zone-name   { font-size: 11px; flex: 1; }
+    .zone-pct    { font-size: 12px; font-weight: 700; width: 36px; text-align: right; }
+    .zone-bar-bg { background: #1e293b; border-radius: 4px; height: 7px; overflow: hidden; }
+    .zone-bar-fill { height: 100%; border-radius: 4px; width: 0; transition: width 0.6s ease; }
+
+    /* ── Heatmap horario ──────────────────────────────────────── */
+    .heatmap-wrap { padding: 10px 14px 14px; }
+
+    .heatmap-grid {
+      display              : grid;
+      grid-template-columns: repeat(24, 1fr);
+      gap                  : 3px;
+    }
+
+    .hm-cell {
+      height       : 38px;
+      border-radius: 4px;
+      display      : flex;
+      flex-direction: column;
+      align-items  : center;
+      justify-content: center;
+      cursor       : pointer;
+      font-size    : 9px;
+      font-weight  : 700;
+      color        : #fff;
+      text-shadow  : 0 1px 3px #0008;
+      transition   : transform 0.1s ease;
+    }
+
+    .hm-cell:hover { transform: scaleY(1.1); }
+    .hm-cell.current { outline: 2px solid #fff; }
+
+    .hm-hour  { font-size: 9px; opacity: 0.75; margin-bottom: 1px; }
+    .hm-value { font-size: 11px; font-weight: 800; }
+
+    .hm-legend {
+      display    : flex;
+      gap        : 12px;
+      margin-top : 8px;
+      font-size  : 10px;
+      color      : var(--dim);
+      align-items: center;
+    }
+
+    .hm-gradient {
+      width        : 100px;
+      height       : 8px;
+      border-radius: 4px;
+      background   : linear-gradient(to right, var(--green), var(--yellow), var(--orange), var(--red));
+    }
+
+    /* ── Grids de gráficas ────────────────────────────────────── */
+    .charts-grid {
+      display              : grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap                  : var(--gap);
+      margin-bottom        : var(--gap);
+    }
+
+    @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width:  680px) { .charts-grid { grid-template-columns: 1fr; }    }
+
+    .chart-pad { padding: 10px 14px 14px; }
+
+    /* ── Fila inferior ────────────────────────────────────────── */
+    .bot-row {
+      display              : grid;
+      grid-template-columns: 1fr 1fr;
+      gap                  : var(--gap);
+      margin-bottom        : var(--gap);
+    }
+
+    @media (max-width: 760px) { .bot-row { grid-template-columns: 1fr; } }
+
+    /* Feed de incidentes */
+    .feed { max-height: 270px; overflow-y: auto; }
+    .feed::-webkit-scrollbar       { width: 4px; }
+    .feed::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 4px; }
+
+    .incident {
+      display      : flex;
+      gap          : 10px;
+      padding      : 9px 14px;
+      border-bottom: 1px solid var(--bdr);
+      animation    : slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0);    }
+    }
+
+    .incident-icon { font-size: 18px; flex-shrink: 0; margin-top: 2px; }
+    .incident-title { font-size: 12px; font-weight: 600; }
+    .incident-meta  { font-size: 11px; color: var(--dim); }
+
+    .incident-sev {
+      margin-left  : auto;
+      font-size    : 10px;
+      padding      : 2px 7px;
+      border-radius: 10px;
+      font-weight  : 700;
+      white-space  : nowrap;
+    }
+
+    /* Tabla económica */
+    .eco-table { width: 100%; border-collapse: collapse; }
+
+    .eco-table th,
+    .eco-table td {
+      padding      : 8px 14px;
+      text-align   : left;
+      border-bottom: 1px solid var(--bdr);
+      font-size    : 12px;
+    }
+
+    .eco-table th {
+      background    : var(--card2);
+      color         : var(--dim);
+      font-size     : 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .eco-table td.num {
+      text-align          : right;
+      font-weight         : 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Sección SerpAPI ──────────────────────────────────────── */
+    .serp-section {
+      background   : var(--card);
+      border       : 1px solid var(--bdr);
+      border-radius: var(--radius);
+      overflow     : hidden;
+      margin-bottom: var(--gap);
+    }
+
+    .serp-key-row {
+      display     : flex;
+      gap         : 8px;
+      align-items : center;
+      padding     : 12px 14px;
+      border-bottom: 1px solid var(--bdr);
+      flex-wrap   : wrap;
+    }
+
+    .serp-key-row label { font-size: 12px; color: var(--dim); }
+
+    .serp-input {
+      background   : var(--bg);
+      border       : 1px solid var(--bdr);
+      color        : var(--txt);
+      border-radius: 6px;
+      padding      : 7px 12px;
+      font-size    : 12px;
+      flex         : 1;
+      min-width    : 200px;
+      outline      : none;
+      transition   : border-color 0.2s ease;
+    }
+
+    .serp-input:focus { border-color: var(--blue); }
+
+    .serp-btn {
+      background  : var(--blue);
+      color       : #fff;
+      border      : none;
+      border-radius: 6px;
+      padding     : 7px 16px;
+      cursor      : pointer;
+      font-size   : 12px;
+      font-weight : 600;
+      white-space : nowrap;
+      transition  : opacity 0.2s ease;
+    }
+
+    .serp-btn:hover    { opacity: 0.9; }
+    .serp-btn.btn-red  { background: var(--red); }
+
+    .serp-queries {
+      display      : none;
+      gap          : 8px;
+      flex-wrap    : wrap;
+      padding      : 10px 14px;
+      border-bottom: 1px solid var(--bdr);
+      align-items  : center;
+    }
+
+    .serp-query-btn {
+      background   : var(--card2);
+      border       : 1px solid var(--bdr);
+      color        : var(--txt);
+      border-radius: 20px;
+      padding      : 5px 13px;
+      cursor       : pointer;
+      font-size    : 11px;
+      display      : flex;
+      align-items  : center;
+      gap          : 5px;
+      transition   : border-color 0.2s ease;
+    }
+
+    .serp-query-btn:hover { border-color: var(--blue); }
+
+    .serp-results { max-height: 320px; overflow-y: auto; }
+
+    .serp-result-item {
+      padding      : 10px 14px;
+      border-bottom: 1px solid var(--bdr);
+      display      : flex;
+      gap          : 12px;
+      align-items  : flex-start;
+      cursor       : pointer;
+      transition   : background 0.15s ease;
+    }
+
+    .serp-result-item:hover { background: var(--card2); }
+
+    .serp-result-icon  { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+    .serp-result-title { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .serp-result-addr  { font-size: 11px; color: var(--dim); margin-top: 2px; }
+
+    .serp-empty {
+      padding   : 24px;
+      text-align: center;
+      color     : var(--dim);
+      font-size : 12px;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────── */
+    footer {
+      text-align : center;
+      padding    : 14px;
+      font-size  : 11px;
+      color      : var(--dim);
+      border-top : 1px solid var(--bdr);
+      margin-top : 6px;
+      line-height: 1.8;
+    }
+
+    footer a { color: var(--blue); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    .footer-sig {
+      display    : inline-flex;
+      align-items: center;
+      gap        : 6px;
+      margin-top : 4px;
+      font-size  : 12px;
+      color      : var(--txt);
+    }
+
+    .footer-sig .sig-dot { color: var(--green); }
+  </style>
+</head>
+
+<body>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HEADER
+  ══════════════════════════════════════════════════════════ -->
+  <header>
+    <div class="hd-left">
+      <!-- Logo UASD -->
+      <svg width="44" height="44" viewBox="0 0 44 44" aria-label="UASD" role="img">
+        <circle cx="22" cy="22" r="22" fill="#0d1b3e"/>
+        <text x="22" y="28" text-anchor="middle" fill="var(--blue)"
+              font-size="17" font-weight="bold" font-family="serif">U</text>
+      </svg>
+      <div class="brand">
+        <small>UASD · MAT 3940 · Investigación de Operaciones</small>
+        <strong>Monitor de Tráfico Oficial — Gran Santo Domingo</strong>
+      </div>
+    </div>
+
+    <div class="hd-right">
+      <!-- Firma del autor -->
+      <a class="author-tag" href="https://github.com/OverL0rk" target="_blank"
+         rel="noopener noreferrer" title="Ver proyecto en GitHub">
+        <span class="dot" aria-hidden="true"></span>
+        By OverL0rk
+      </a>
+      <div>
+        <div id="clock" aria-live="polite">00:00:00</div>
+        <div id="dateline"></div>
+      </div>
+      <span class="live" aria-label="Transmisión en vivo">EN VIVO</span>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════
+       CONTENIDO PRINCIPAL
+  ══════════════════════════════════════════════════════════ -->
+  <main class="wrap">
+
+    <!-- ── Barra de fuentes ─────────────────────────────────── -->
+    <section class="sources-bar" aria-label="Fuentes de datos">
+      <div>
+        <strong>Fuentes sincronizadas: Waze Live · Google Maps · OpenStreetMap</strong>
+        <small>
+          Datos en tiempo real desde las apps de navegación más usadas del Gran Santo Domingo.
+          Cambia de fuente con las pestañas del mapa o usa tu ubicación.
+        </small>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-green" onclick="MapController.refresh()">↺ Refrescar</button>
+        <button class="btn btn-purple" onclick="MapController.centerOnUser()">📍 Mi ubicación</button>
+        <button class="btn btn-blue" onclick="MapController.openFull()">⬡ Abrir mapa</button>
+      </div>
+    </section>
+
+    <!-- ── KPIs ─────────────────────────────────────────────── -->
+    <section class="kpis" aria-label="Indicadores clave">
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#7f1d1d" aria-hidden="true">🚗</div>
+        <div>
+          <div class="kpi-label">Vehículos en Circulación</div>
+          <div class="kpi-value" id="kv" style="color:var(--red)">0</div>
+          <div class="kpi-sub">estimado · 6.6 M registrados</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#1c3d5a" aria-hidden="true">🚦</div>
+        <div>
+          <div class="kpi-label">Velocidad Promedio</div>
+          <div class="kpi-value" id="ks" style="color:var(--blue)">0 km/h</div>
+          <div class="kpi-sub">vías principales</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#713f12" aria-hidden="true">⏱</div>
+        <div>
+          <div class="kpi-label">Demora Extra Promedio</div>
+          <div class="kpi-value" id="kd" style="color:var(--orange)">0 min</div>
+          <div class="kpi-sub">minutos adicionales</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#4a1d96" aria-hidden="true">⚠</div>
+        <div>
+          <div class="kpi-label">Incidentes Activos</div>
+          <div class="kpi-value" id="ki" style="color:var(--purple)">0</div>
+          <div class="kpi-sub">reportados hoy</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#14532d" aria-hidden="true">💰</div>
+        <div>
+          <div class="kpi-label">Pérdida Económica Hoy</div>
+          <div class="kpi-value" id="kl" style="color:var(--green)">RD$ 0</div>
+          <div class="kpi-sub">estimado acumulado</div>
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-icon" style="background:#134e4a" aria-hidden="true">🌫</div>
+        <div>
+          <div class="kpi-label">CO₂ Extra Hoy</div>
+          <div class="kpi-value" id="kc" style="color:var(--teal)">0 t</div>
+          <div class="kpi-sub">toneladas estimadas</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Mapa + Sidebar ─────────────────────────────────── -->
+    <section class="map-grid" aria-label="Mapa y estado de congestión">
+
+      <!-- Tarjeta del mapa -->
+      <div class="card">
+        <div class="card-head">
+          <span class="title">Mapa Vial en Vivo · Gran Santo Domingo</span>
+          <span class="badge badge-green" id="mapStatus">SINCRONIZADO</span>
+        </div>
+
+        <!-- Tabs de fuentes -->
+        <nav class="map-tabs" id="mapTabs" role="tablist" aria-label="Fuentes del mapa">
+          <button class="map-tab" role="tab" aria-selected="true"  data-src="waze"    >Waze Live</button>
+          <button class="map-tab" role="tab" aria-selected="false" data-src="gmaps"   >Google Traffic</button>
+          <button class="map-tab" role="tab" aria-selected="false" data-src="gmap_js" >🗺 Google Maps Live</button>
+          <button class="map-tab" role="tab" aria-selected="false" data-src="osm"     >OpenStreetMap</button>
+          <button class="map-tab" role="tab" aria-selected="false" data-src="windy"   >Windy Clima</button>
+          <span class="map-tab-info" id="mapTabInfo" aria-live="polite">
+            Fuente verificada, actualización automática
+          </span>
+        </nav>
+
+        <!-- Viewport del mapa -->
+        <div class="map-viewport" id="mapViewport" role="region" aria-label="Vista del mapa">
+          <iframe
+            id="mapFrame"
+            src="https://embed.waze.com/iframe?zoom=12&lat=18.4861&lon=-69.9312&ct=livemap"
+            title="Mapa de tráfico en vivo"
+            frameborder="0"
+            allowfullscreen
+            referrerpolicy="no-referrer-when-downgrade"
+            loading="lazy"
+          ></iframe>
+
+          <!-- Google Maps JS (modo interactivo) -->
+          <div id="gmapContainer" aria-label="Google Maps interactivo">
+            <div id="gmapDiv"></div>
+            <div class="gmap-controls" role="group" aria-label="Capas del mapa">
+              <button class="gmap-ctrl-btn active" id="gbtnTraffic" onclick="TrafficMap.toggleLayer('traffic')">🚦 Tráfico</button>
+              <button class="gmap-ctrl-btn"        id="gbtnMarkers" onclick="TrafficMap.toggleLayer('markers')">📍 Incidentes</button>
+              <button class="gmap-ctrl-btn"        id="gbtnHeat"    onclick="TrafficMap.toggleLayer('heat')">🔥 Heatmap</button>
+              <button class="gmap-ctrl-btn"        id="gbtnRefresh" onclick="TrafficMap.refreshMarkers()">↺ Actualizar</button>
+            </div>
+            <div class="gmap-legend" aria-label="Leyenda de severidad">
+              <div class="gmap-legend-title">Severidad</div>
+              <div class="gmap-leg-item"><div class="gmap-leg-dot" style="background:var(--red)"   ></div>Crítico / Alto</div>
+              <div class="gmap-leg-item"><div class="gmap-leg-dot" style="background:var(--yellow)"></div>Moderado / Medio</div>
+              <div class="gmap-leg-item"><div class="gmap-leg-dot" style="background:var(--blue)"  ></div>Leve</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="map-footer">
+          <span>📍 Los colores de congestión los dibuja la fuente activa sobre las vías reales.</span>
+          <span style="margin-left:auto">Fuente: <span id="mapSourceLabel">Waze Live</span></span>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <!-- Gauge de congestión -->
+        <div class="card">
+          <div class="card-head"><span class="title">Índice de Congestión Ahora</span></div>
+          <div class="gauge-wrap">
+            <div class="gauge-canvas-wrap">
+              <canvas id="gaugeCanvas"></canvas>
+              <div class="gauge-center">
+                <div class="gauge-num" id="gaugeNum">0</div>
+                <div class="gauge-label" id="gaugeLabel">Cargando</div>
+              </div>
+            </div>
+            <div class="gauge-scale" aria-hidden="true">
+              <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Zonas estratégicas -->
+        <div class="card">
+          <div class="card-head">
+            <span class="title">Zonas Estratégicas</span>
+            <span class="badge badge-yellow" id="zonesTimestamp">--:--:--</span>
+          </div>
+          <div id="zoneList" role="list" aria-label="Estado de zonas principales"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Heatmap horario ───────────────────────────────────── -->
+    <section class="card" style="margin-bottom:var(--gap)" aria-label="Patrón de congestión por hora">
+      <div class="card-head">
+        <span class="title">Patrón de Congestión Horaria · Gran Santo Domingo</span>
+      </div>
+      <div class="heatmap-wrap">
+        <div class="heatmap-grid" id="heatmapGrid" role="grid" aria-label="Heatmap 24 horas"></div>
+        <div class="hm-legend" aria-label="Escala del heatmap">
+          <span>Baja</span>
+          <div class="hm-gradient" aria-hidden="true"></div>
+          <span>Alta</span>
+          <span style="margin-left:auto">La hora resaltada es la actual</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Gráficas principales ──────────────────────────────── -->
+    <section class="charts-grid" aria-label="Gráficas de análisis">
+      <div class="card">
+        <div class="card-head"><span class="title">Composición del Parque Vehicular</span></div>
+        <div class="chart-pad"><canvas id="cFleet" style="max-height:220px"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="title">Flujo de Tráfico por Horas</span></div>
+        <div class="chart-pad"><canvas id="cFlow"  style="max-height:220px"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="title">Pérdidas Mensuales (miles mill. RD$)</span></div>
+        <div class="chart-pad"><canvas id="cEco"   style="max-height:220px"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ── Incidentes + Impacto económico ───────────────────── -->
+    <section class="bot-row" aria-label="Incidentes e impacto económico">
+      <div class="card">
+        <div class="card-head">
+          <span class="title">Incidentes Reportados</span>
+          <span class="badge badge-red" id="incidentBadge">0 activos</span>
+        </div>
+        <div class="feed" id="incidentFeed" role="log" aria-live="polite" aria-label="Feed de incidentes"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="title">Desglose de Impacto Económico</span></div>
+        <div style="overflow:auto">
+          <table class="eco-table" aria-label="Impacto económico por sector">
+            <thead>
+              <tr>
+                <th>Sector</th>
+                <th style="text-align:right">Pérdida/Hora</th>
+                <th style="text-align:right">Pérdida Diaria Est.</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Distribución y Logística</td>
+                <td class="num" style="color:var(--red)">RD$ 4,200,000</td>
+                <td class="num" style="color:var(--red)">RD$ 50,400,000</td>
+              </tr>
+              <tr>
+                <td>Transporte Público</td>
+                <td class="num" style="color:var(--orange)">RD$ 2,800,000</td>
+                <td class="num" style="color:var(--orange)">RD$ 33,600,000</td>
+              </tr>
+              <tr>
+                <td>Comercio y Servicios</td>
+                <td class="num" style="color:var(--yellow)">RD$ 1,900,000</td>
+                <td class="num" style="color:var(--yellow)">RD$ 22,800,000</td>
+              </tr>
+              <tr>
+                <td>Productividad Laboral</td>
+                <td class="num" style="color:var(--yellow)">RD$ 3,500,000</td>
+                <td class="num" style="color:var(--yellow)">RD$ 42,000,000</td>
+              </tr>
+              <tr>
+                <td>Combustible Desperdiciado</td>
+                <td class="num" style="color:var(--dim)">RD$ 1,100,000</td>
+                <td class="num" style="color:var(--dim)">RD$ 13,200,000</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Gráficas secundarias ──────────────────────────────── -->
+    <section class="charts-grid" aria-label="Gráficas secundarias">
+      <div class="card">
+        <div class="card-head">
+          <span class="title">Ocupación de Parqueos Zonas Clave</span>
+          <span class="badge badge-yellow" id="parkBadge">--%</span>
+        </div>
+        <div class="chart-pad"><canvas id="cPark"    style="max-height:240px"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="title">Incidentes por Tipo (últimas 24 h)</span></div>
+        <div class="chart-pad"><canvas id="cInc"     style="max-height:240px"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="title">Pérdidas Mensuales Acumuladas 2026</span></div>
+        <div class="chart-pad"><canvas id="cMonthly" style="max-height:240px"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ── SerpAPI ───────────────────────────────────────────── -->
+    <section class="serp-section" aria-label="Búsqueda SerpAPI">
+      <div class="card-head">
+        <span class="title">SerpAPI · Buscar en Google Maps en Vivo</span>
+        <span class="badge badge-blue" id="serpStatus">SIN CONECTAR</span>
+      </div>
+      <div class="serp-key-row">
+        <label for="serpKey">API Key</label>
+        <input id="serpKey" class="serp-input" type="password" placeholder="Tu SerpAPI Key..." autocomplete="off" />
+        <button class="serp-btn" onclick="SerpSearch.connect()">Conectar</button>
+      </div>
+      <div class="serp-queries" id="serpQueries">
+        <button class="serp-query-btn" id="sq1" onclick="SerpSearch.run('accidente tráfico Santo Domingo','sq1','🚧')">🚧 Accidentes</button>
+        <button class="serp-query-btn" id="sq2" onclick="SerpSearch.run('obras viales Santo Domingo','sq2','🚜')">🚜 Obras Viales</button>
+        <button class="serp-btn btn-red" style="margin-left:auto" onclick="SerpSearch.clear()">Limpiar</button>
+      </div>
+      <div class="serp-results" id="serpResults">
+        <div class="serp-empty">Conecta SerpAPI para buscar lugares e incidentes.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════════
+       FOOTER
+  ══════════════════════════════════════════════════════════ -->
+  <footer>
+    <div>
+      Datos simulados con base en informes de congestión del Gran Santo Domingo y fuentes públicas.
+      · UASD MAT 3940 · Investigación de Operaciones
+    </div>
+    <div class="footer-sig">
+      <span class="sig-dot">⬤</span>
+      Desarrollado por
+      <a href="https://github.com/OverL0rk" target="_blank" rel="noopener noreferrer">OverL0rk</a>
+      · v2.0.0 · 2026
+    </div>
+  </footer>
+
+  <!-- ══════════════════════════════════════════════════════════
+       JAVASCRIPT
+       Organizado en módulos tipo IIFE con responsabilidad única:
+         · Config      — constantes y datos estáticos
+         · Clock       — reloj en tiempo real
+         · KPIs        — indicadores clave
+         · MapController — gestión del iframe y tabs
+         · TrafficMap  — Google Maps JS API
+         · Gauge       — gauge de congestión
+         · Zones       — barras de zonas
+         · Heatmap     — heatmap horario
+         · Charts      — todas las gráficas Chart.js
+         · IncidentFeed — feed de incidentes
+         · SerpSearch  — integración SerpAPI
+  ══════════════════════════════════════════════════════════ -->
+  <script>
+    'use strict';
+
+    /* ── Config ───────────────────────────────────────────────────
+       Constantes globales del proyecto. Centralizar aquí facilita
+       ajustar parámetros sin tocar la lógica de negocio.
+    ──────────────────────────────────────────────────────────── */
+    const Config = Object.freeze({
+      CENTER: { lat: 18.4861, lng: -69.9312 },
+      ZOOM  : 11,
+
+      /** Fuentes de mapa disponibles */
+      MAP_SOURCES: {
+        waze: {
+          label: 'Waze Live Map',
+          desc : 'Reportes ciudadanos en vivo — app #1 de tráfico en RD.',
+          url  : 'https://embed.waze.com/iframe?zoom=12&lat=18.4861&lon=-69.9312&ct=livemap',
+          full : 'https://www.waze.com/live-map/directions?latlng=18.4861%2C-69.9312&zoom=12',
+        },
+        gmaps: {
+          label: 'Google Maps Traffic',
+          desc : 'Vista de tráfico embebida de Google Maps.',
+          url  : 'https://www.google.com/maps/embed?pb=!1m14!1m12!1m3!1d30000!2d-69.9312!3d18.4861!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1ses!2sdo!4v1700000000000!5m2!1ses!2sdo',
+          full : 'https://www.google.com/maps/@18.4861,-69.9312,11z/data=!5m1!1e1',
+        },
+        gmap_js: {
+          label: 'Google Maps Live (JS API)',
+          desc : 'Mapa interactivo con tráfico real, marcadores de incidentes y heatmap.',
+          url  : null,
+          full : 'https://www.google.com/maps/@18.4861,-69.9312,13z/data=!5m1!1e1',
+        },
+        osm: {
+          label: 'OpenStreetMap',
+          desc : 'Mapa comunitario abierto — vías, POI y transporte.',
+          url  : 'https://www.openstreetmap.org/export/embed.html?bbox=-70.0512%2C18.4161%2C-69.8112%2C18.5561&layer=mapnik&marker=18.4861%2C-69.9312',
+          full : 'https://www.openstreetmap.org?mlat=18.4861&mlon=-69.9312&zoom=11',
+        },
+        windy: {
+          label: 'Windy Clima Vial',
+          desc : 'Lluvia y viento sobre la red vial que impacta el tráfico.',
+          url  : 'https://embed.windy.com/embed2.html?lat=18.4861&lon=-69.9312&zoom=10&level=surface&overlay=rain&menu=&message=true&marker=18.4861,-69.9312&metricWind=km/h&metricTemp=%C2%B0C',
+          full : 'https://www.windy.com/18.4861,-69.9312?rain,11',
+        },
+      },
+
+      /** Coordenadas reales de ubicaciones clave en Gran Santo Domingo */
+      INCIDENT_COORDS: {
+        'Av. 27 de Febrero c/ Lincoln'    : { lat: 18.4752, lng: -69.9312 },
+        'Autopista Duarte km 9'           : { lat: 18.5410, lng: -69.9870 },
+        'Av. Kennedy c/ Máximo Gómez'     : { lat: 18.4680, lng: -69.9420 },
+        'Puente Duarte'                   : { lat: 18.4963, lng: -69.9510 },
+        'Av. Luperón c/ J.F. Kennedy'     : { lat: 18.4700, lng: -70.0040 },
+        'Av. Churchill'                   : { lat: 18.4760, lng: -69.9200 },
+        'Av. Abraham Lincoln'             : { lat: 18.4800, lng: -69.9270 },
+        'Circunvalación Norte'            : { lat: 18.5150, lng: -69.9600 },
+        'Av. Independencia'               : { lat: 18.4730, lng: -69.9000 },
+        'Av. Máximo Gómez c/ JFK'         : { lat: 18.4680, lng: -69.9090 },
+        'Av. España'                      : { lat: 18.4890, lng: -69.8780 },
+        'Av. Núñez de Cáceres'            : { lat: 18.4830, lng: -69.9460 },
+        'Túnel 27 de Febrero'             : { lat: 18.4748, lng: -69.9530 },
+        'Autopista Duarte'                : { lat: 18.5350, lng: -69.9820 },
+        'Av. George Washington (Malecón)' : { lat: 18.4660, lng: -69.9100 },
+        'Av. Luperón zona baja'           : { lat: 18.4710, lng: -70.0100 },
+        'Av. Los Próceres'                : { lat: 18.4850, lng: -69.9680 },
+        'Av. Las Américas'                : { lat: 18.4600, lng: -69.8500 },
+        'Charles de Gaulle'               : { lat: 18.5050, lng: -69.9730 },
+        'Carretera Mella'                 : { lat: 18.4780, lng: -69.8700 },
+        'Av. República de Colombia'       : { lat: 18.4900, lng: -69.9380 },
+        'Plaza de la Bandera'             : { lat: 18.4735, lng: -69.9530 },
+        'Av. México'                      : { lat: 18.4700, lng: -69.9020 },
+        'Palacio Nacional'                : { lat: 18.4750, lng: -69.9017 },
+      },
+
+      /** Patrón de congestión por hora (0–23) */
+      HOURLY_PATTERN: [
+        15, 10,  8,  7,  8, 18, 45, 78,
+        92, 70, 55, 50, 55, 58, 62, 72,
+        85, 95, 88, 70, 50, 35, 28, 22,
+      ],
+
+      /** Vías principales con sus índices base de congestión */
+      ROADS: [
+        { name: 'Autopista Duarte',      base: 88 },
+        { name: 'Av. 27 de Febrero',     base: 92 },
+        { name: 'Av. Luperón',           base: 80 },
+        { name: 'Av. Abraham Lincoln',   base: 78 },
+        { name: 'Av. Winston Churchill', base: 75 },
+        { name: 'Av. John F. Kennedy',   base: 70 },
+        { name: 'Av. Máximo Gómez',      base: 65 },
+        { name: 'Carretera Mella',       base: 58 },
+      ],
+
+      /** Plantillas de incidentes simulados */
+      INCIDENT_TEMPLATES: [
+        { ic: '🚧', t: 'Accidente múltiple',        locs: ['Av. 27 de Febrero c/ Lincoln','Autopista Duarte km 9','Av. Kennedy c/ Máximo Gómez','Puente Duarte','Av. Luperón c/ J.F. Kennedy'], sev: 'CRÍTICO',  cls: 'badge-red'    },
+        { ic: '🚜', t: 'Obras viales carril cerrado',locs: ['Av. Churchill','Av. Abraham Lincoln','Circunvalación Norte','Av. Independencia'],                                                sev: 'MODERADO', cls: 'badge-yellow' },
+        { ic: '🚦', t: 'Semáforo averiado',          locs: ['Av. Máximo Gómez c/ JFK','Av. España','Av. Núñez de Cáceres'],                                                                  sev: 'MEDIO',    cls: 'badge-yellow' },
+        { ic: '🚗', t: 'Vehículo varado',            locs: ['Túnel 27 de Febrero','Autopista Duarte','Av. George Washington (Malecón)'],                                                      sev: 'LEVE',     cls: 'badge-blue'   },
+        { ic: '🌧', t: 'Inundación vial',            locs: ['Av. Luperón zona baja','Av. Los Próceres','Av. Las Américas'],                                                                   sev: 'CRÍTICO',  cls: 'badge-red'    },
+        { ic: '🚨', t: 'Congestión severa reportada',locs: ['Charles de Gaulle','Carretera Mella','Av. República de Colombia'],                                                               sev: 'ALTO',     cls: 'badge-red'    },
+        { ic: '✊', t: 'Protesta / manifestación',   locs: ['Plaza de la Bandera','Av. México','Palacio Nacional'],                                                                           sev: 'ALTO',     cls: 'badge-red'    },
+      ],
+    });
+
+    /* ── Helpers ──────────────────────────────────────────────────
+       Funciones puras reutilizadas por varios módulos.
+    ──────────────────────────────────────────────────────────── */
+    const Utils = {
+      /** Factor de rush hour basado en la hora actual */
+      rushFactor() {
+        const h = new Date().getHours();
+        if (h >= 6  && h <= 9 ) return 0.88 + Math.random() * 0.12;
+        if (h >= 16 && h <= 20) return 0.84 + Math.random() * 0.16;
+        return 0.4 + Math.random() * 0.2;
+      },
+
+      /** Color CSS según porcentaje de congestión */
+      congestionColor(pct) {
+        if (pct >= 75) return 'var(--red)';
+        if (pct >= 50) return 'var(--orange)';
+        if (pct >= 25) return 'var(--yellow)';
+        return 'var(--green)';
+      },
+
+      /** Etiqueta de nivel de congestión */
+      congestionLabel(pct) {
+        if (pct >= 75) return 'Congestionado';
+        if (pct >= 50) return 'Pesado';
+        if (pct >= 25) return 'Moderado';
+        return 'Fluido';
+      },
+
+      /** Color de heatmap (hex) */
+      heatColor(v) {
+        if (v >= 85) return '#ef4444';
+        if (v >= 65) return '#f97316';
+        if (v >= 45) return '#f59e0b';
+        if (v >= 25) return '#84cc16';
+        return '#22c55e';
+      },
+
+      /** Color de severidad de incidente */
+      sevColor(sev) {
+        if (['CRÍTICO', 'ALTO'].includes(sev))        return '#ef4444';
+        if (['MODERADO', 'MEDIO'].includes(sev))      return '#f59e0b';
+        return '#3b82f6';
+      },
+
+      /** Elemento por id (shorthand) */
+      el: (id) => document.getElementById(id),
+
+      /** Número aleatorio entero en [min, max] */
+      rand: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min,
+
+      /** Clamp numérico */
+      clamp: (v, min, max) => Math.min(max, Math.max(min, v)),
+    };
+
+    /* ── Clock ────────────────────────────────────────────────────
+       Actualiza el reloj y la fecha en el header cada segundo.
+    ──────────────────────────────────────────────────────────── */
+    const Clock = {
+      init() {
+        this.tick();
+        setInterval(() => this.tick(), 1000);
+      },
+      tick() {
+        const now = new Date();
+        Utils.el('clock').textContent    = now.toLocaleTimeString('es-DO', { hour12: false });
+        Utils.el('dateline').textContent = now.toLocaleDateString('es-DO', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        });
+      },
+    };
+
+    /* ── KPIs ─────────────────────────────────────────────────────
+       Actualiza los 6 indicadores clave de tráfico.
+    ──────────────────────────────────────────────────────────── */
+    const KPIs = {
+      update() {
+        const f  = Utils.rushFactor();
+        const h  = new Date().getHours();
+        const veh     = Math.round(6_600_000 * 0.28 * f);
+        const spd     = Math.round(38 - f * 5.5);
+        const delay   = Math.round(f * 35);
+        const loss    = Math.round((h / 24) * 162_000_000 * (0.85 + f * 0.3));
+        const co2     = ((h / 24) * 480 * (0.8 + f * 0.4)).toFixed(1);
+        const inc     = Math.round(8 * f * 2.2);
+
+        Utils.el('kv').textContent = veh.toLocaleString('es-DO');
+        Utils.el('ks').textContent = `${spd} km/h`;
+        Utils.el('kd').textContent = `${delay} min`;
+        Utils.el('kl').textContent = `RD$ ${(loss / 1e6).toFixed(1)} M`;
+        Utils.el('kc').textContent = `${co2} t`;
+        Utils.el('ki').textContent = inc;
+      },
+    };
+
+    /* ── MapController ────────────────────────────────────────────
+       Gestiona el cambio entre fuentes de mapa (tabs) y los
+       controles de la barra de fuentes.
+    ──────────────────────────────────────────────────────────── */
+    const MapController = {
+      current: 'waze',
+
+      init() {
+        Utils.el('mapTabs').addEventListener('click', (e) => {
+          const tab = e.target.closest('.map-tab');
+          if (tab) this.setSource(tab.dataset.src);
+        });
+        // Auto-refresh cada 5 minutos
+        setInterval(() => this.refresh(), 5 * 60 * 1000);
+      },
+
+      setSource(key) {
+        const src = Config.MAP_SOURCES[key];
+        if (!src) return;
+        this.current = key;
+
+        const viewport = Utils.el('mapViewport');
+        const frame    = Utils.el('mapFrame');
+
+        if (key === 'gmap_js') {
+          viewport.classList.add('gmap-active');
+          frame.src = 'about:blank';
+          window.__gmapsTabActive = true;
+          if (window.__gmapsReady) TrafficMap.build();
+        } else {
+          viewport.classList.remove('gmap-active');
+          window.__gmapsTabActive = false;
+          if (src.url) frame.src = src.url;
+        }
+
+        // Actualizar tabs aria-selected
+        document.querySelectorAll('.map-tab').forEach((btn) => {
+          btn.setAttribute('aria-selected', btn.dataset.src === key ? 'true' : 'false');
+        });
+
+        Utils.el('mapSourceLabel').textContent = src.label;
+        Utils.el('mapTabInfo').textContent     = src.desc;
+        this._setStatus('SINCRONIZADO · ' + src.label.toUpperCase(), 'badge-green');
+      },
+
+      refresh() {
+        if (this.current === 'gmap_js') { TrafficMap.refreshMarkers(); return; }
+        const src = Config.MAP_SOURCES[this.current];
+        if (!src?.url) return;
+        const sep = src.url.includes('?') ? '&' : '?';
+        Utils.el('mapFrame').src = src.url + sep + 't=' + Date.now();
+        this._setStatus('ACTUALIZANDO…', 'badge-yellow');
+        setTimeout(() => this._setStatus('SINCRONIZADO · ' + src.label.toUpperCase(), 'badge-green'), 1800);
+      },
+
+      openFull() {
+        const src = Config.MAP_SOURCES[this.current];
+        if (src?.full) window.open(src.full, '_blank', 'noopener,noreferrer');
+      },
+
+      centerOnUser() {
+        if (!navigator.geolocation) {
+          alert('Tu navegador no soporta geolocalización.');
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          ({ coords }) => this._flyTo(coords.latitude, coords.longitude, true),
+          (err)        => { console.error('[Geo]', err); alert('No se pudo obtener tu ubicación. Verifica los permisos.'); },
+          { enableHighAccuracy: true, timeout: 10_000 }
+        );
+      },
+
+      flyTo(lat, lng) {
+        this._flyTo(lat, lng, false);
+      },
+
+      _flyTo(lat, lng, fromUser = false) {
+        if (!lat || !lng) return;
+        if (this.current === 'gmap_js') {
+          TrafficMap.panTo(lat, lng, fromUser ? 15 : 16);
+          Utils.el('mapViewport').scrollIntoView({ behavior: 'smooth' });
+          return;
+        }
+        const zoom = fromUser ? 14 : 15;
+        const urls = {
+          waze  : `https://embed.waze.com/iframe?zoom=${zoom}&lat=${lat}&lon=${lng}&ct=livemap`,
+          gmaps : `https://maps.google.com/maps?q=${lat},${lng}&z=${zoom}&t=m&layer=t&output=embed`,
+          osm   : `https://www.openstreetmap.org/export/embed.html?bbox=${lng-.01}%2C${lat-.01}%2C${lng+.01}%2C${lat+.01}&layer=mapnik&marker=${lat}%2C${lng}`,
+        };
+        const url = urls[this.current] || Config.MAP_SOURCES[this.current]?.url;
+        if (url) Utils.el('mapFrame').src = url;
+        Utils.el('mapViewport').scrollIntoView({ behavior: 'smooth' });
+      },
+
+      _setStatus(text, cls) {
+        const el = Utils.el('mapStatus');
+        el.textContent = text;
+        el.className   = `badge ${cls}`;
+      },
+    };
+
+    /* ── TrafficMap ───────────────────────────────────────────────
+       Encapsula toda la lógica de Google Maps JS API:
+       construcción del mapa, capas, marcadores de incidentes
+       y heatmap de congestión.
+    ──────────────────────────────────────────────────────────── */
+    const TrafficMap = {
+      _map        : null,
+      _traffic    : null,
+      _heatmap    : null,
+      _markers    : [],
+      _infoWindow : null,
+      _layers     : { traffic: true, markers: false, heat: false },
+
+      /** Llamado desde window.initGoogleMap o desde MapController */
+      build() {
+        if (this._map) { this._map.setCenter(Config.CENTER); this.refreshMarkers(); return; }
+
+        this._map = new google.maps.Map(Utils.el('gmapDiv'), {
+          center          : Config.CENTER,
+          zoom            : 13,
+          mapTypeId       : 'roadmap',
+          disableDefaultUI: false,
+          zoomControl     : true,
+          mapTypeControl  : false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          styles: [
+            { elementType: 'geometry',              stylers: [{ color: '#0d1b2a' }] },
+            { elementType: 'labels.text.stroke',    stylers: [{ color: '#0b0e1a' }] },
+            { elementType: 'labels.text.fill',      stylers: [{ color: '#94a3b8' }] },
+            { featureType: 'road',                  elementType: 'geometry',        stylers: [{ color: '#1e3a5f' }] },
+            { featureType: 'road.arterial',         elementType: 'geometry',        stylers: [{ color: '#1e4080' }] },
+            { featureType: 'road.highway',          elementType: 'geometry',        stylers: [{ color: '#2563eb' }] },
+            { featureType: 'road.highway',          elementType: 'geometry.stroke', stylers: [{ color: '#1d3461' }] },
+            { featureType: 'water',                 elementType: 'geometry',        stylers: [{ color: '#071426' }] },
+            { featureType: 'poi',                   elementType: 'geometry',        stylers: [{ color: '#111827' }] },
+            { featureType: 'poi.park',              elementType: 'geometry',        stylers: [{ color: '#0d2b1f' }] },
+            { featureType: 'transit',               elementType: 'geometry',        stylers: [{ color: '#1a2035' }] },
+            { featureType: 'administrative',        elementType: 'geometry',        stylers: [{ color: '#162032' }] },
+            { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#e2e8f0' }] },
+            { featureType: 'landscape.natural',     elementType: 'geometry',        stylers: [{ color: '#0b1420' }] },
+          ],
+        });
+
+        this._infoWindow = new google.maps.InfoWindow();
+        this._traffic    = new google.maps.TrafficLayer();
+        this._traffic.setMap(this._map);
+
+        this.refreshMarkers();
+        setInterval(() => this.refreshMarkers(), 20_000);
+      },
+
+      panTo(lat, lng, zoom = 15) {
+        if (!this._map) return;
+        this._map.setCenter({ lat, lng });
+        this._map.setZoom(zoom);
+      },
+
+      refreshMarkers() {
+        if (!this._map) return;
+        this._clearMarkers();
+
+        const feedItems = document.querySelectorAll('#incidentFeed .incident');
+        const heatPoints = [];
+
+        feedItems.forEach((item) => {
+          const title = item.querySelector('.incident-title')?.textContent.trim() ?? '';
+          const meta  = item.querySelector('.incident-meta')?.textContent ?? '';
+          const loc   = meta.split('·')[0].trim();
+          const sev   = item.querySelector('.incident-sev')?.textContent.trim() ?? 'LEVE';
+          const emoji = item.querySelector('.incident-icon')?.textContent.trim() ?? '📍';
+
+          const coords = Config.INCIDENT_COORDS[loc] ?? {
+            lat: Config.CENTER.lat + (Math.random() - 0.5) * 0.08,
+            lng: Config.CENTER.lng + (Math.random() - 0.5) * 0.10,
+          };
+
+          heatPoints.push(new google.maps.LatLng(coords.lat, coords.lng));
+
+          if (!this._layers.markers) return;
+
+          const marker = new google.maps.Marker({
+            position : coords,
+            map      : this._map,
+            icon     : this._makeIcon(sev, emoji),
+            title    : `${title} — ${loc}`,
+            animation: google.maps.Animation.DROP,
+          });
+
+          marker.addListener('click', () => {
+            const c = Utils.sevColor(sev);
+            this._infoWindow.setContent(`
+              <div style="background:#111827;border:1px solid #1e2d4a;border-radius:8px;padding:10px 14px;min-width:200px;font-family:system-ui,sans-serif;font-size:12px;color:#e2e8f0;">
+                <div style="font-size:13px;font-weight:700;margin-bottom:4px;">${emoji} ${title}</div>
+                <div style="color:#94a3b8;margin-bottom:6px;">📍 ${loc}</div>
+                <span style="background:${c}22;color:${c};padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">${sev}</span>
+              </div>`);
+            this._infoWindow.open(this._map, marker);
+          });
+
+          this._markers.push(marker);
+        });
+
+        // Heatmap
+        if (this._heatmap) {
+          this._heatmap.setData(heatPoints);
+        } else if (this._layers.heat && heatPoints.length) {
+          this._heatmap = new google.maps.visualization.HeatmapLayer({
+            data    : heatPoints,
+            map     : this._map,
+            radius  : 40,
+            gradient: ['rgba(0,0,0,0)','rgba(34,197,94,.6)','rgba(245,158,11,.8)','rgba(249,115,22,.9)','rgba(239,68,68,1)'],
+          });
+        }
+
+        const count = this._layers.markers ? this._markers.length : feedItems.length;
+        MapController._setStatus(`GOOGLE MAPS LIVE · ${count} INCIDENTES`, 'badge-green');
+      },
+
+      toggleLayer(layer) {
+        if (!this._map) return;
+        this._layers[layer] = !this._layers[layer];
+
+        const btnMap = { traffic: 'gbtnTraffic', markers: 'gbtnMarkers', heat: 'gbtnHeat' };
+        Utils.el(btnMap[layer]).classList.toggle('active', this._layers[layer]);
+
+        if (layer === 'traffic') {
+          this._traffic.setMap(this._layers.traffic ? this._map : null);
+        }
+        if (layer === 'markers') {
+          this._markers.forEach((m) => m.setMap(this._layers.markers ? this._map : null));
+          if (this._layers.markers && !this._markers.length) this.refreshMarkers();
+        }
+        if (layer === 'heat') {
+          if (this._heatmap) this._heatmap.setMap(this._layers.heat ? this._map : null);
+          else if (this._layers.heat) this.refreshMarkers();
+        }
+      },
+
+      _clearMarkers() {
+        this._markers.forEach((m) => m.setMap(null));
+        this._markers = [];
+      },
+
+      _makeIcon(sev, emoji) {
+        const color = Utils.sevColor(sev);
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="42" viewBox="0 0 36 42">
+          <path d="M18 0C8.06 0 0 8.06 0 18c0 13.5 18 24 18 24S36 31.5 36 18C36 8.06 27.94 0 18 0z"
+                fill="${color}" stroke="#0b0e1a" stroke-width="1.5"/>
+          <text x="18" y="23" text-anchor="middle" font-size="16">${emoji}</text>
+        </svg>`;
+        return {
+          url       : 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+          scaledSize: new google.maps.Size(36, 42),
+          anchor    : new google.maps.Point(18, 42),
+        };
+      },
+    };
+
+    /* ── Gauge ────────────────────────────────────────────────────
+       Gauge semicircular de congestión usando Chart.js.
+    ──────────────────────────────────────────────────────────── */
+    const Gauge = {
+      _chart: null,
+
+      init() {
+        const ctx = Utils.el('gaugeCanvas').getContext('2d');
+        this._chart = new Chart(ctx, {
+          type: 'doughnut',
+          data: { datasets: [{ data: [0, 100], backgroundColor: ['#f97316', '#1e2d4a'], borderWidth: 0, circumference: 270, rotation: 135 }] },
+          options: { responsive: true, cutout: '78%', plugins: { tooltip: { enabled: false } } },
+        });
+      },
+
+      update(v) {
+        if (!this._chart) return;
+        const color = Utils.congestionColor(v);
+        this._chart.data.datasets[0].data             = [v, 100 - v];
+        this._chart.data.datasets[0].backgroundColor  = [color, '#1e293b'];
+        this._chart.update();
+        Utils.el('gaugeNum').textContent   = v;
+        Utils.el('gaugeNum').style.color   = color;
+        Utils.el('gaugeLabel').textContent = Utils.congestionLabel(v);
+      },
+    };
+
+    /* ── Zones ────────────────────────────────────────────────────
+       Barras de porcentaje de congestión por vía.
+    ──────────────────────────────────────────────────────────── */
+    const Zones = {
+      update() {
+        const f    = Utils.rushFactor();
+        const data = Config.ROADS
+          .map((r) => ({ name: r.name, pct: Utils.clamp(Math.round(r.base * f), 10, 99) }))
+          .sort((a, b) => b.pct - a.pct);
+
+        Utils.el('zoneList').innerHTML = data.map((z) => {
+          const col = Utils.congestionColor(z.pct);
+          return `
+            <div class="zone-row" role="listitem">
+              <div class="zone-top">
+                <div class="zone-name">${z.name}</div>
+                <div class="zone-pct" style="color:${col}">${z.pct}%</div>
+              </div>
+              <div class="zone-bar-bg">
+                <div class="zone-bar-fill" style="width:${z.pct}%;background:${col}"></div>
+              </div>
+            </div>`;
+        }).join('');
+
+        Utils.el('zonesTimestamp').textContent = new Date().toLocaleTimeString('es-DO', { hour12: false });
+      },
+    };
+
+    /* ── Heatmap ──────────────────────────────────────────────────
+       Heatmap horario de 24 celdas.
+    ──────────────────────────────────────────────────────────── */
+    const Heatmap = {
+      build() {
+        const el   = Utils.el('heatmapGrid');
+        const nowH = new Date().getHours();
+        el.innerHTML = Config.HOURLY_PATTERN.map((v, h) => `
+          <div class="hm-cell ${h === nowH ? 'current' : ''}"
+               style="background:${Utils.heatColor(v)}"
+               title="Hora ${h}:00 — Congestión ${v}"
+               role="gridcell"
+               aria-label="${h}:00 h — congestión ${v}">
+            <span class="hm-hour">${String(h).padStart(2,'0')}h</span>
+            <span class="hm-value">${v}</span>
+          </div>`).join('');
+      },
+    };
+
+    /* ── Charts ───────────────────────────────────────────────────
+       Inicializa todas las gráficas Chart.js.
+    ──────────────────────────────────────────────────────────── */
+    const Charts = {
+      _instances: {},
+
+      init() {
+        // Defaults globales de Chart.js
+        Chart.defaults.color       = '#94a3b8';
+        Chart.defaults.borderColor = '#1e293b';
+        Chart.defaults.font.family = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+
+        this._fleet();
+        this._flow();
+        this._eco();
+        this._parking();
+        this._incidents();
+        this._monthly();
+      },
+
+      _fleet() {
+        this._make('cFleet', 'doughnut', {
+          labels  : ['Motocicletas','Automóviles','Jeepetas','Camiones','Autobuses','Otros'],
+          datasets: [{
+            data           : [56.4, 22.1, 11.3, 5.8, 2.1, 2.3],
+            backgroundColor: ['#ef4444','#3b82f6','#8b5cf6','#f59e0b','#14b8a6','#64748b'],
+            borderColor    : '#0b0e1a',
+            borderWidth    : 2,
+          }],
+        }, {
+          cutout : '62%',
+          plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 } } } },
+        });
+      },
+
+      _flow() {
+        const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + 'h');
+        this._make('cFlow', 'line', {
+          labels  : hours,
+          datasets: [
+            { label: 'Congestión',    data: Config.HOURLY_PATTERN,                                 borderColor: '#ef4444', backgroundColor: '#ef444422', fill: true,  tension: 0.35, yAxisID: 'y',  pointRadius: 2 },
+            { label: 'Velocidad km/h',data: Config.HOURLY_PATTERN.map((v) => Math.max(6, 42 - v * 0.38)), borderColor: '#3b82f6', backgroundColor: '#3b82f622', fill: false, tension: 0.35, yAxisID: 'y1', pointRadius: 2 },
+          ],
+        }, {
+          interaction: { mode: 'index', intersect: false },
+          plugins    : { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },
+          scales     : {
+            y : { position: 'left',  beginAtZero: true, max: 100, title: { display: true, text: 'Cong.' }, grid: { color: '#1e293b' } },
+            y1: { position: 'right', beginAtZero: true, max: 60,  title: { display: true, text: 'km/h' }, grid: { display: false } },
+            x : { grid: { color: '#1e293b' } },
+          },
+        });
+      },
+
+      _eco() {
+        this._make('cEco', 'bar', {
+          labels  : ['Logística','Prod. Laboral','Transp. Público','Comercio','Combustible'],
+          datasets: [{
+            label          : 'Pérdida mensual (MM RD$)',
+            data           : [1512, 1260, 1008, 684, 396],
+            backgroundColor: ['#ef4444','#f97316','#f59e0b','#eab308','#64748b'],
+            borderRadius   : 6,
+          }],
+        }, {
+          indexAxis: 'y',
+          plugins  : { legend: { display: false } },
+          scales   : { x: { grid: { color: '#1e293b' } }, y: { grid: { display: false } } },
+        });
+      },
+
+      _parking() {
+        const zones = ['Piantini','Naco','Zona Col.','Bella Vista','Arroyo Hondo','Los Prados','Mirador','28 de Enero'];
+        const data  = zones.map(() => Utils.rand(45, 99));
+        const avg   = Math.round(data.reduce((a, b) => a + b, 0) / data.length);
+        const badge = Utils.el('parkBadge');
+        badge.textContent = avg + '%';
+        badge.className   = `badge ${avg >= 80 ? 'badge-red' : avg >= 60 ? 'badge-yellow' : 'badge-green'}`;
+
+        this._make('cPark', 'bar', {
+          labels  : zones,
+          datasets: [{ label: 'Ocupado', data, backgroundColor: data.map(Utils.heatColor), borderRadius: 4 }],
+        }, {
+          plugins: { legend: { display: false } },
+          scales : {
+            y: { beginAtZero: true, max: 100, grid: { color: '#1e293b' } },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        });
+      },
+
+      _incidents() {
+        this._make('cInc', 'polarArea', {
+          labels  : ['Accidentes','Obras','Veh. varado','Semáforo','Congestión severa','Inundación'],
+          datasets: [{
+            data           : [42, 28, 18, 15, 35, 8],
+            backgroundColor: ['#ef4444cc','#f97316cc','#f59e0bcc','#8b5cf6cc','#14b8a6cc','#3b82f6cc'],
+            borderColor    : '#0b0e1a',
+            borderWidth    : 2,
+          }],
+        }, {
+          plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 11 } } } },
+          scales : { r: { grid: { color: '#1e293b' }, angleLines: { color: '#1e293b' }, ticks: { backdropColor: 'transparent' } } },
+        });
+      },
+
+      _monthly() {
+        const meses       = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        const mesActual   = new Date().getMonth();
+        const mensual     = [4800,4600,4950,5100,5050,5200,4900,5150,5300,5450,5500,5700];
+        let   acum        = 0;
+        const acumArr     = mensual.map((v) => (acum += v));
+        const visible     = (arr) => arr.map((v, i) => (i <= mesActual ? v : null));
+
+        this._make('cMonthly', 'bar', {
+          labels  : meses,
+          datasets: [
+            { type: 'bar',  label: 'Pérdida del mes (MM RD$)',  data: visible(mensual),  backgroundColor: meses.map((_, i) => i === mesActual ? '#ef4444' : '#3b82f6aa'), borderRadius: 5, order: 2, yAxisID: 'y'  },
+            { type: 'line', label: 'Acumulado anual (MM RD$)',  data: visible(acumArr),  borderColor: '#f97316', backgroundColor: '#f9731622', fill: true, tension: 0.3, yAxisID: 'y1', pointRadius: 3, pointBackgroundColor: '#f97316', order: 1 },
+          ],
+        }, {
+          interaction: { mode: 'index', intersect: false },
+          plugins    : { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },
+          scales     : {
+            y : { beginAtZero: true, title: { display: true, text: 'Mensual'   }, grid: { color: '#1e293b' } },
+            y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Acumulado' }, grid: { display: false } },
+            x : { grid: { display: false } },
+          },
+        });
+      },
+
+      /** Factory de gráficas con opciones base + responsive */
+      _make(id, type, data, extraOptions = {}) {
+        const baseOptions = { responsive: true, maintainAspectRatio: false };
+        this._instances[id] = new Chart(Utils.el(id), {
+          type,
+          data,
+          options: { ...baseOptions, ...extraOptions },
+        });
+      },
+    };
+
+    /* ── IncidentFeed ─────────────────────────────────────────────
+       Genera y renderiza el feed de incidentes simulados.
+    ──────────────────────────────────────────────────────────── */
+    const IncidentFeed = {
+      MAX_ITEMS: 15,
+      INIT_ITEMS: 8,
+
+      _generate() {
+        const tpl  = Config.INCIDENT_TEMPLATES[Utils.rand(0, Config.INCIDENT_TEMPLATES.length - 1)];
+        const loc  = tpl.locs[Utils.rand(0, tpl.locs.length - 1)];
+        const mins = Utils.rand(1, 45);
+        return { ic: tpl.ic, title: tpl.t, loc, mins, sev: tpl.sev, cls: tpl.cls };
+      },
+
+      _renderItem(inc, prepend = false) {
+        const feed = Utils.el('incidentFeed');
+        if (!feed) return;
+
+        const el = document.createElement('div');
+        el.className = 'incident';
+        el.setAttribute('role', 'listitem');
+        el.innerHTML = `
+          <div class="incident-icon" aria-hidden="true">${inc.ic}</div>
+          <div>
+            <div class="incident-title">${inc.title}</div>
+            <div class="incident-meta">${inc.loc} · hace ${inc.mins} min</div>
+          </div>
+          <span class="incident-sev badge ${inc.cls}">${inc.sev}</span>`;
+
+        if (prepend && feed.firstChild) feed.insertBefore(el, feed.firstChild);
+        else feed.appendChild(el);
+
+        // Mantener máximo de ítems
+        while (feed.children.length > this.MAX_ITEMS) feed.removeChild(feed.lastChild);
+      },
+
+      _updateBadge() {
+        const count = Utils.el('incidentFeed').children.length;
+        Utils.el('incidentBadge').textContent = `${count} activos`;
+        Utils.el('ki').textContent = count;
+      },
+
+      init() {
+        const feed = Utils.el('incidentFeed');
+        if (!feed) return;
+        feed.innerHTML = '';
+        for (let i = 0; i < this.INIT_ITEMS; i++) this._renderItem(this._generate());
+        this._updateBadge();
+      },
+
+      addNew() {
+        this._renderItem(this._generate(), true);
+        this._updateBadge();
+      },
+    };
+
+    /* ── SerpSearch ───────────────────────────────────────────────
+       Integración con SerpAPI para búsquedas en Google Maps.
+    ──────────────────────────────────────────────────────────── */
+    const SerpSearch = {
+      _key: null,
+
+      connect() {
+        const key = Utils.el('serpKey').value.trim();
+        if (!key) { alert('Ingresa tu API Key de SerpAPI.'); return; }
+        this._key = key;
+        Utils.el('serpStatus').textContent = 'CONECTADO';
+        Utils.el('serpStatus').className   = 'badge badge-green';
+        Utils.el('serpQueries').style.display = 'flex';
+      },
+
+      clear() {
+        Utils.el('serpResults').innerHTML = '<div class="serp-empty">Resultados limpiados.</div>';
+      },
+
+      async run(query, btnId, icon) {
+        if (!this._key) { alert('Conecta tu API Key primero.'); return; }
+
+        const btn = Utils.el(btnId);
+        btn.textContent = 'Buscando…';
+        btn.disabled    = true;
+
+        const apiUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(
+          `https://serpapi.com/search.json?engine=google_maps&q=${encodeURIComponent(query)}&ll=18.4861,-69.9312,13z&type=search&api_key=${this._key}`
+        );
+
+        try {
+          const resp = await fetch(apiUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          btn.textContent = `${icon} Listo`;
+          if (data.local_results) this._renderResults(data.local_results, icon);
+          else Utils.el('serpResults').innerHTML = '<div class="serp-empty">Sin resultados para esta búsqueda.</div>';
+        } catch (err) {
+          console.error('[SerpAPI]', err);
+          btn.textContent = '⚠ Error';
+          alert('Error al buscar. Verifica la consola o bloqueo CORS.');
+        } finally {
+          btn.disabled = false;
+        }
+      },
+
+      _renderResults(results, icon) {
+        const list = Utils.el('serpResults');
+        list.innerHTML = results.map((item) => {
+          const lat = item.gps_coordinates?.latitude  ?? null;
+          const lng = item.gps_coordinates?.longitude ?? null;
+          return `
+            <div class="serp-result-item"
+                 role="button"
+                 tabindex="0"
+                 onclick="MapController.flyTo(${lat},${lng})"
+                 onkeypress="if(event.key==='Enter') MapController.flyTo(${lat},${lng})"
+                 aria-label="Ver ${item.title} en el mapa">
+              <div class="serp-result-icon" aria-hidden="true">${icon}</div>
+              <div>
+                <div class="serp-result-title">${item.title}</div>
+                <div class="serp-result-addr">${item.address ?? ''}</div>
+              </div>
+            </div>`;
+        }).join('');
+      },
+    };
+
+    /* ── Orchestrator ─────────────────────────────────────────────
+       Punto de entrada principal. Inicializa módulos y registra
+       todos los intervalos de actualización periódica.
+    ──────────────────────────────────────────────────────────── */
+    function bootstrap() {
+      // Inicialización única
+      Clock.init();
+      KPIs.update();
+      MapController.init();
+      Gauge.init();
+      Heatmap.build();
+      Charts.init();
+      IncidentFeed.init();
+
+      // Primera actualización del gauge y zonas (con pequeño delay para que el gauge esté listo)
+      setTimeout(() => {
+        Gauge.update(Math.round(Utils.rushFactor() * 95));
+        Zones.update();
+      }, 400);
+
+      // Exponer _buildGoogleMap globalmente para el callback de Google Maps
+      window.__buildGoogleMap = () => TrafficMap.build();
+
+      // ── Intervalos periódicos ──────────────────────────────────
+      // KPIs + gauge + zonas: cada 30 s
+      setInterval(() => {
+        KPIs.update();
+        Gauge.update(Math.round(Utils.rushFactor() * 95));
+        Zones.update();
+      }, 30_000);
+
+      // Nuevo incidente: cada 18 s
+      setInterval(() => IncidentFeed.addNew(), 18_000);
+
+      // Heatmap: cada 60 s
+      setInterval(() => Heatmap.build(), 60_000);
+    }
+
+    // Arrancar cuando el DOM esté listo y Chart.js haya cargado
+    window.addEventListener('load', bootstrap);
+  </script>
+
+</body>
+</html>
