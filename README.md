@@ -24,4 +24,4 @@ Excelencia Visual: Utilizará HTML y CSS de vanguardia para crear un entorno vis
 5. Joel Escalante | Analista de Aseguramiento de Calidad (QA) y Optimización
 Visión Estratégica: Custodio de la fiabilidad del sistema. A través de protocolos de prueba rigurosos, garantizará que la solución sea resiliente ante escenarios de tráfico masivo y condiciones críticas.
 
-Eficiencia Operativa: Identificará cuellos de botella en los procesos de análisis, refinando la lógica del sistema para alcanzar un estándar de "cero errores".
+
